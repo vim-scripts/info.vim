@@ -25,7 +25,7 @@
 " IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 " POSSIBILITY OF SUCH DAMAGE.
 "
-" $Id: info.vim,v 1.5 2002/03/21 01:50:41 rnd Exp $
+" $Id: info.vim,v 1.6 2002/11/13 20:28:20 rnd Exp $
 
 let s:infoCmd = 'info --output=-'
 let s:dirPattern = '^\* [^:]*: \(([^)]*)\)'
@@ -125,11 +125,11 @@ fun! s:InfoBufferInit()
 	syn match infoTitle		/^[A-Z][0-9A-Za-z `',/&]\{,43}\([a-z']\|[A-Z]\{2}\)$/
 	syn match infoTitle		/^[-=*]\{,45}$/
 	syn match infoString		/`[^`]*'/
-	syn region infoLink		start=/\*[Nn]ote/ end=/::/
 	exec 'syn match infoLink	/'.s:notePattern.'/'
 	exec 'syn match infoLink	/'.s:menuPattern.'/hs=s+2'
 	exec 'syn match infoLink	/'.s:dirPattern.'/hs=s+2'
 	exec 'syn match infoLink	/'.s:indexPatternHL.'/hs=s+2,he=e-2'
+	syn region infoLink		start=/\*[Nn]ote/ end=/::/
 
 	if !exists("g:did_info_syntax_inits")
 	    let g:did_info_syntax_inits = 1
@@ -278,9 +278,21 @@ fun! s:FollowLink()
 	    let node = 'Top'
 	endif
     else
+	" we got `*note' link.
+	" let's see whether it is wrap over the next line
 	let successPattern = s:notePattern
 	let file = b:info_file
 	let node = substitute(link, successPattern, '\1', '')
+	let last_char = substitute(link, successPattern, '\2', '')
+	if last_char == ''
+	    let next_line = getline(line('.') + 1)
+	    let note_match_end = matchend(next_line, '^[^*:]\+::')
+	    if note_match_end < 0
+		echohl ErrorMsg | echo 'Invalid link under cursor' | echohl None
+	    	return
+	    endif
+	    let node = node .' '. strpart(next_line, 0, note_match_end - 2)
+	endif
     endif
     let link_start_pos = match(current_line, successPattern)
     let link_end_pos = matchend(current_line, successPattern)
