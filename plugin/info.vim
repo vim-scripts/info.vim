@@ -1,6 +1,6 @@
 " GNU Info browser
 "
-" Copyright (c) 2001 Slavik Gorbanyov <rnd@web-drive.ru>
+" Copyright (c) 2001, 2002 Slavik Gorbanyov <rnd@web-drive.ru>
 " All rights reserved.
 "
 " Redistribution and use, with or without modification, are permitted
@@ -25,12 +25,17 @@
 " IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 " POSSIBILITY OF SUCH DAMAGE.
 "
-" $Id: info.vim,v 1.6 2002/11/13 20:28:20 rnd Exp $
+" $Id: info.vim,v 1.7 2002/11/30 21:59:05 rnd Exp $
 
 let s:infoCmd = 'info --output=-'
+if has('win32')
+    let s:infoBufferName = '-Info- '
+else
+    let s:infoBufferName = 'Info: '
+endif
 let s:dirPattern = '^\* [^:]*: \(([^)]*)\)'
 let s:menuPattern = '^\* \([^:]*\)::'
-let s:notePattern = '\*[Nn]ote \([^():]*\)\(::\|$\)'
+let s:notePattern = '\*[Nn]ote\%(\s\|$\)'
 let s:indexPattern = '^\* [^:]*:\s*\([^.]*\)\.$'
 let s:indexPatternHL = '^\* [^:]*:\s\+[^(]'
 
@@ -72,7 +77,7 @@ fun! s:InfoExec(file, node, ...)
 	let last_node = b:info_node
 	let last_line = line('.')
     endif
-    let bufname = 'Info: '.a:file.a:node
+    let bufname = s:infoBufferName.a:file.a:node
     if buflisted(bufname) && a:0 < 2
 	if &ft == 'info'
 	    silent exe 'b!' escape(bufname, '\ ')
@@ -81,21 +86,27 @@ fun! s:InfoExec(file, node, ...)
 	endif
     else
     	if &ft == 'info'
-    	    silent exe 'e!' escape(bufname, '\ ')
-	else 
-	    silent exe 'new' escape(bufname, '\ ')
+	    let command = 'e!'
+	else
+	    let command = 'new'
 	endif
+	silent! exe command "+exe'setlocal''modifiable''noswapfile''buftype=nofile''bufhidden=delete'" escape(bufname, '\ ')
 	setf info
-	setlocal modifiable noswapfile buftype=nofile bufhidden=delete
+
 	let cmd = s:infoCmd." '".a:file.a:node."' 2>/dev/null"
 
 	" handle shell redirection portable
-	let save_shell = &shell
+	if $OS !~? 'Windows'
+	    let save_shell = &shell
+	    set shell=/bin/sh
+	endif
 	let save_shellredir = &shellredir
-	set shell=/bin/sh shellredir=>
+    	set shellredir=>
 	exe "silent 0r!".cmd
-	let &shell = save_shell
 	let &shellredir = save_shellredir
+	if $OS !~? 'Windows'
+	    let &shell = save_shell
+	endif
 
 	call s:InfoBufferInit()
     endif
@@ -125,11 +136,10 @@ fun! s:InfoBufferInit()
 	syn match infoTitle		/^[A-Z][0-9A-Za-z `',/&]\{,43}\([a-z']\|[A-Z]\{2}\)$/
 	syn match infoTitle		/^[-=*]\{,45}$/
 	syn match infoString		/`[^`]*'/
-	exec 'syn match infoLink	/'.s:notePattern.'/'
 	exec 'syn match infoLink	/'.s:menuPattern.'/hs=s+2'
 	exec 'syn match infoLink	/'.s:dirPattern.'/hs=s+2'
 	exec 'syn match infoLink	/'.s:indexPatternHL.'/hs=s+2,he=e-2'
-	syn region infoLink		start=/\*[Nn]ote/ end=/::/
+	syn region infoLink		start=/\*[Nn]ote/ end=/\(::\|[.,]\)/
 
 	if !exists("g:did_info_syntax_inits")
 	    let g:did_info_syntax_inits = 1
@@ -163,6 +173,8 @@ fun! s:InfoBufferInit()
     nnoremap <buffer> q		:q!<cr>
     noremap <buffer> <Space>	<C-F>
     noremap <buffer> <Backspace> <C-B>
+
+    runtime info-local.vim
 endfun
 
 fun! s:Help()
@@ -278,20 +290,36 @@ fun! s:FollowLink()
 	    let node = 'Top'
 	endif
     else
-	" we got `*note' link.
-	" let's see whether it is wrap over the next line
+	" we got a `*note' link.
 	let successPattern = s:notePattern
-	let file = b:info_file
-	let node = substitute(link, successPattern, '\1', '')
-	let last_char = substitute(link, successPattern, '\2', '')
-	if last_char == ''
-	    let next_line = getline(line('.') + 1)
-	    let note_match_end = matchend(next_line, '^[^*:]\+::')
-	    if note_match_end < 0
-		echohl ErrorMsg | echo 'Invalid link under cursor' | echohl None
-	    	return
+	let current_line = current_line.' '.getline(line('.') + 1)
+
+	if exists('g:info_debug')
+	    echo 'current_line:' current_line
+	endif
+	
+	let link_pattern = '\*[Nn]ote [^:.]\+: \([^.,]\+\)\%([,.]\|$\)'
+	let link = matchstr(current_line, link_pattern)
+	if link == ''
+	    let link_pattern = '\*[Nn]ote \([^:]\+\)\%(::\)'
+	    let link = matchstr(current_line, link_pattern)
+	    if link == ''
+		echohl ErrorMsg | echo 'No link under cursor' | echohl None
+		return
 	    endif
-	    let node = node .' '. strpart(next_line, 0, note_match_end - 2)
+	endif
+	let node = substitute(link, link_pattern, '\1', '')
+	let successPattern = link_pattern
+
+	let link_pattern = '^\(([^)]*)\)\=\s*\(.*\)'
+	let link = matchstr(node, link_pattern)
+	let file = substitute(link, link_pattern, '\1', '')
+	let node = substitute(link, link_pattern, '\2', '')
+	if file == ''
+	    let file = b:info_file
+	endif
+	if node == ''
+	    let node = 'Top'
 	endif
     endif
     let link_start_pos = match(current_line, successPattern)
@@ -354,7 +382,7 @@ fun! s:Search()
     while search(s:info_search_string, 'W') == 0
 	if !exists('b:info_next_node') || b:info_next_node == ''
 	    \ || match(b:info_next_node, '(.*)') != -1
-	    silent! exe 'bwipe' escape('Info: '.start_file.start_node, '\ ')
+	    silent! exe 'bwipe' escape(s:infoBufferName.start_file.start_node, '\ ')
 	    silent! call s:InfoExec(start_file, start_node, start_line, 'force')
 	    echohl ErrorMsg | echo "\rSearch pattern not found" | echohl None
 	    return
