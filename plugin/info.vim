@@ -1,6 +1,31 @@
 " GNU Info browser
-" Copyright (c) 2001 rnd <rnd@web-drive.ru>
-" $Id: info.vim,v 1.2 2001/06/17 00:01:40 rnd Exp $
+"
+" Copyright (c) 2001 Slavik Gorbanyov <rnd@web-drive.ru>
+" All rights reserved.
+"
+" Redistribution and use, with or without modification, are permitted
+" provided that the following conditions are met:
+"
+" 1. Redistributions must retain the above copyright notice, this list
+"    of conditions and the following disclaimer.
+"
+" 2. The name of the author may not be used to endorse or promote
+"    products derived from this script without specific prior written
+"    permission.
+"
+" THIS SCRIPT IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS
+" OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+" WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+" DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+" INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+" (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+" SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+" STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+" IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+" POSSIBILITY OF SUCH DAMAGE.
+"
+" $Id: info.vim,v 1.5 2002/03/21 01:50:41 rnd Exp $
 
 let s:infoCmd = 'info --output=-'
 let s:dirPattern = '^\* [^:]*: \(([^)]*)\)'
@@ -16,11 +41,16 @@ fun! s:Info(...)
     let node = "Top"
     if a:0
 	let file = a:1
-	if strpart(file, 0, 1) != '('
+	if file[0] != '('
 	    let file = '('.file.')'
 	endif
 	if a:0 > 1
 	    let node = a:2
+	    let arg_idx = 3
+	    while arg_idx <= a:0
+		exe 'let node = node ." ". a:'.arg_idx
+		let arg_idx = arg_idx + 1
+	    endwhile
 	endif
     endif
 
@@ -43,7 +73,7 @@ fun! s:InfoExec(file, node, ...)
 	let last_line = line('.')
     endif
     let bufname = 'Info: '.a:file.a:node
-    if bufexists(bufname) && a:0 < 2
+    if buflisted(bufname) && a:0 < 2
 	if &ft == 'info'
 	    silent exe 'b!' escape(bufname, '\ ')
 	else 
@@ -55,10 +85,18 @@ fun! s:InfoExec(file, node, ...)
 	else 
 	    silent exe 'new' escape(bufname, '\ ')
 	endif
-	setlocal modifiable noswapfile buftype=nofile bufhidden=hide
 	setf info
+	setlocal modifiable noswapfile buftype=nofile bufhidden=delete
 	let cmd = s:infoCmd." '".a:file.a:node."' 2>/dev/null"
-	exe "0r!".cmd
+
+	" handle shell redirection portable
+	let save_shell = &shell
+	let save_shellredir = &shellredir
+	set shell=/bin/sh shellredir=>
+	exe "silent 0r!".cmd
+	let &shell = save_shell
+	let &shellredir = save_shellredir
+
 	call s:InfoBufferInit()
     endif
     let b:info_file = a:file
@@ -68,9 +106,12 @@ fun! s:InfoExec(file, node, ...)
 	let b:info_last_node = last_node
 	let b:info_last_line = last_line
     endif
-    call s:InfoFirstLine()
     setlocal nomodifiable
-    exe line
+    if s:InfoFirstLine()
+	exe line
+    else
+	echohl ErrorMsg | echo 'Info failed (node not found)' | echohl None
+    endif
 endfun
 
 fun! s:InfoBufferInit()
@@ -83,7 +124,8 @@ fun! s:InfoBufferInit()
 	syn match infoMenuTitle		/^\* Menu:/hs=s+2,he=e-1
 	syn match infoTitle		/^[A-Z][0-9A-Za-z `',/&]\{,43}\([a-z']\|[A-Z]\{2}\)$/
 	syn match infoTitle		/^[-=*]\{,45}$/
-	syn match infoString		/`[^']*'/
+	syn match infoString		/`[^`]*'/
+	syn region infoLink		start=/\*[Nn]ote/ end=/::/
 	exec 'syn match infoLink	/'.s:notePattern.'/'
 	exec 'syn match infoLink	/'.s:menuPattern.'/hs=s+2'
 	exec 'syn match infoLink	/'.s:dirPattern.'/hs=s+2'
@@ -98,6 +140,7 @@ fun! s:InfoBufferInit()
 	endif
     endif
 
+    " FIXME: <h> is move cursor left
     noremap <buffer> h		:call <SID>Help()<cr>
     noremap <buffer> <CR>	:call <SID>FollowLink()<cr>
     noremap <buffer> <C-]>	:call <SID>FollowLink()<cr>
@@ -105,6 +148,7 @@ fun! s:InfoBufferInit()
 "    noremap <buffer> l		:call <SID>LastNode()<cr>
     noremap <buffer> ;		:call <SID>LastNode()<cr>
     noremap <buffer> <C-T>	:call <SID>LastNode()<cr>
+    noremap <buffer> <C-S>	/
     " FIXME: <n> is go to next match
 "    noremap <buffer> n		:call <SID>NextNode()<cr>
     noremap <buffer> .		:call <SID>NextNode()<cr>
@@ -136,6 +180,7 @@ fun! s:Help()
     echo 'u		Move "up" from this node.'
     echo 'd		Move to "directory" node.'
     echo 't		Move to the Top node.'
+    echo '<C-S>		Search forward within current node only.'
     echo 's		Search forward through all nodes for a specified string.'
     echo 'q		Quit browser.'
     echohl SpecialKey
@@ -150,17 +195,17 @@ fun! s:InfoFirstLine()
     let line = getline(1)
     let node_offset = matchend(line, '^File: [^, 	]*')
     if node_offset == -1
-	echohl ErrorMsg | echo 'Info failed' | echohl None
-	return
+	return 0
     endif
     let file = strpart(line, 6, node_offset-6)
     if file == 'dir'
-	return
+	return 1
     endif
 "    let file = substitute(file, '\(.*\)\.info\(\.gz\)\=', '\1', '')
     let b:info_next_node = s:GetSubmatch( line, '\s\+Next: \([^,]*\),')
     let b:info_prev_node = s:GetSubmatch( line, '\s\+Prev: \([^,]*\),')
     let b:info_up_node = s:GetSubmatch( line, '\s\+Up: \(.*\)')
+    return 1
 endfun
 
 fun! s:GetSubmatch(string, pattern)
@@ -298,7 +343,7 @@ fun! s:Search()
 	if !exists('b:info_next_node') || b:info_next_node == ''
 	    \ || match(b:info_next_node, '(.*)') != -1
 	    silent! exe 'bwipe' escape('Info: '.start_file.start_node, '\ ')
-	    silent call s:InfoExec(start_file, start_node, start_line, 'force')
+	    silent! call s:InfoExec(start_file, start_node, start_line, 'force')
 	    echohl ErrorMsg | echo "\rSearch pattern not found" | echohl None
 	    return
 	endif
