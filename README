@@ -1,0 +1,3 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=21
+
+requires vim 6.x and GNU info. adds new command `Info': without arguments it displays "directory" node, with single argument displays this file (eg `:Info libc'). with two arguments, first specifies file and second node to display (eg `:Info libc POSIX\ Threads' -- note space escaping). within browser, press h key to see available key shortcuts.
